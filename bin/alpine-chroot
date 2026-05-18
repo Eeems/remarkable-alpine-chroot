@@ -1,0 +1,60 @@
+#!/bin/bash
+set -e
+config_file="/home/$USER/.config/alpine-chroot.conf"
+if [ -f "$config_file" ]; then
+  # shellcheck disable=SC1091,SC1090
+  source "$config_file"
+fi
+src_path="${chroot_path:-"/home/$USER/.local/share/alpine"}"
+alpine_arch=${alpine_arch:-armhf}
+alpine_branch=${alpine_branch:-latest-stable}
+
+debug() {
+  if [[ ! -z "$DEBUG" ]]; then
+    echo "$@" >/dev/stderr
+  fi
+}
+
+SUDO=
+if [[ "$USER" != "root" ]] && command -v sudo >/dev/null; then
+  debug "Using sudo"
+  SUDO=sudo
+fi
+
+if ! [ -d "${src_path}/usr/sbin" ]; then
+  case "$alpine_arch" in
+  x86_64) ;;
+  aarch64)
+    export APK_TOOLS_SHA256=27a975638ddc95a411c9f17c63383e335da9edf6bb7de2281d950c291a11f878
+    export APK_TOOLS_URI=https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.7/aarch64/apk.static
+    ;;
+  armv7)
+    export APK_TOOLS_SHA256=fa3f534b4e10a779270c05fe51de2f0bb32cbd9b293ac4f6adc0128fb8570846
+    export APK_TOOLS_URI=https://gitlab.alpinelinux.org/api/v4/projects/5/packages/generic/v2.14.7/armv7/apk.static
+    ;;
+  *)
+    echo "Unknown architecture $alpine_arch"
+    exit 1
+    ;;
+  esac
+  debug "Installing with alpine-chroot-install..."
+  mkdir -p "$src_path"
+  if ! alpine-chroot-install -a "$alpine_arch" -b "$alpine_branch" -d "$src_path"; then
+    echo "Failed to install chroot" >/dev/stderr
+    exit 1
+  fi
+fi
+if ! [ -f "${src_path}/.isconfigured" ]; then
+  debug "Configuring chroot..."
+  # shellcheck disable=SC2016
+  echo 'PS1="(alpine) $PS1"' | $SUDO tee -a "${src_path}/root/.profile"
+  touch "${src_path}/.isconfigured"
+fi
+
+if [ $# -eq 0 ]; then
+  debug "Entering chroot"
+  $SUDO "$src_path"/enter-chroot sh -c "cd ~; exec sh -li"
+else
+  debug "Running command..."
+  $SUDO "$src_path"/enter-chroot "$@"
+fi
